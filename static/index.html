@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Bingo Speler</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Bingo Online</h1>
+  <input id="card_id" placeholder="Kaart-ID (bijv. AB12CD34)">
+  <button onclick="register()">Registreer</button>
+
+  <h2>Getrokken nummers</h2>
+  <div id="drawn">—</div>
+
+  <div id="bingo" style="display:none;color:red;font-size:2em;">BINGO!</div>
+
+  <script>
+  let myId = '';
+  function register() {
+    myId = document.getElementById('card_id').value.trim();
+    if (!myId) return;
+    fetch(`/register/${myId}`, {method:'POST', body:new FormData()})
+      .then(()=>alert('Geregistreerd!'));
+  }
+  setInterval(()=>{
+    if (!myId) return;
+    fetch('/status').then(r=>r.json()).then(d=>{
+      document.getElementById('drawn').innerText = d.drawn.join(' • ') || '—';
+    });
+  },2000);
+  </script>
+</body>
+</html>
