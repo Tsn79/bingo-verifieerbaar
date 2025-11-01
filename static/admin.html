@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Bingo Admin</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Trek een nummer (1-75)</h1>
+  <input id="num" type="number" min="1" max="75">
+  <button onclick="draw()">Trek!</button>
+
+  <h2>Getrokken</h2>
+  <div id="list"></div>
+
+  <h2>Winnaars</h2>
+  <div id="wins"></div>
+
+  <script>
+  async function draw() {
+    const n = document.getElementById('num').value;
+    const r = await fetch('/draw', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify({number:n})});
+    const d = await r.json();
+    document.getElementById('list').innerText = d.drawn.join(' • ');
+    document.getElementById('wins').innerText = d.winners.length ? d.winners.join(', ') : '—';
+  }
+  // live update
+  setInterval(()=>fetch('/status').then(r=>r.json()).then(d=>document.getElementById('list').innerText=d.drawn.join(' • ')),3000);
+  </script>
+</body>
+</html>
