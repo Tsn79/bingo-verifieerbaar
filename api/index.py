@@ -20,9 +20,10 @@ app = Flask(__name__,
             static_folder=os.path.join(BASE_DIR, 'static'),
             template_folder=os.path.join(BASE_DIR, 'templates'))
 
-# --- DATABASE (Vercel /tmp) ---
+# --- DATABASE PATH ---
 DB_PATH = '/tmp/bingo.db'
 
+# --- INIT DB BIJ IMPORT (altijd, maar veilig) ---
 def init_db():
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -33,12 +34,14 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS drawn_numbers
                        (number INTEGER, drawn_at TEXT DEFAULT (datetime('now')))''')
         conn.commit()
+        print("DB initialized at:", DB_PATH)
     except Exception as e:
-        print("DB init error:", e)
+        print(f"DB INIT FAILED: {e}")
     finally:
-        conn.close()
+        if 'conn' in locals():
+            conn.close()
 
-# Roep aan bij import
+# Run bij import → altijd beschikbaar
 init_db()
 
 # --- CARD GENERATOR ---
@@ -94,7 +97,7 @@ def create_pdf(card_id, cols, base_url):
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:
-        print("PDF error:", e)
+        print(f"PDF ERROR: {e}")
         return None
 
 # --- BINGO CHECK ---
@@ -110,7 +113,7 @@ def check_bingo(card_data, drawn):
         if all(matrix[i][i] in drawn_set or matrix[i][i] == "FREE" for i in range(5)): return True
         if all(matrix[i][4-i] in drawn_set or matrix[i][4-i] == "FREE" for i in range(5)): return True
     except:
-        pass
+        return False
     return False
 
 # --- ROUTES ---
@@ -136,10 +139,9 @@ def generate_card():
                      (card_id, json.dumps(cols), card_hash))
         conn.commit()
     except Exception as e:
-        print("DB insert error:", e)
+        print(f"DB INSERT ERROR: {e}")
     finally:
         conn.close()
-
     return send_file(BytesIO(pdf_data), download_name=f"{card_id}.pdf", mimetype='application/pdf')
 
 @app.route('/register/<card_id>', methods=['GET', 'POST'])
@@ -161,7 +163,7 @@ def register(card_id):
                      (name, email, card_id))
         conn.commit()
     except Exception as e:
-        print("Register error:", e)
+        print(f"REGISTER ERROR: {e}")
     finally:
         conn.close()
     return f'<h2>Geregistreerd! <a href="/">admin</a> | <a href="/verify/{card_id}">verify</a></h2>'
@@ -179,7 +181,7 @@ def verify(card_id):
         valid = cur_hash == stored_hash
         drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
     except Exception as e:
-        print("Verify error:", e)
+        print(f"VERIFY ERROR: {e}")
         return "Fout bij ophalen kaart", 500
     finally:
         conn.close()
@@ -191,7 +193,8 @@ def status():
     conn = sqlite3.connect(DB_PATH)
     try:
         drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
-    except:
+    except Exception as e:
+        print(f"STATUS ERROR: {e}")
         drawn = []
     finally:
         conn.close()
@@ -200,9 +203,9 @@ def status():
 @app.route('/draw', methods=['POST'])
 def draw():
     try:
-        num = int(request.json['number'])
+        num = int(request.json.get('number', 0))
         if not 1 <= num <= 75:
-            return jsonify({"error": "Nummer moet 1-75 zijn"}), 400
+            return jsonify({"error": "Nummer 1-75"}), 400
     except:
         return jsonify({"error": "Ongeldig nummer"}), 400
 
@@ -210,15 +213,12 @@ def draw():
     try:
         conn.execute("INSERT INTO drawn_numbers (number) VALUES (?)", (num,))
         drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
-        winners = []
-        for row in conn.execute("SELECT id, data FROM cards WHERE registered=1"):
-            if check_bingo(row[1], drawn):
-                winners.append(row[0])
+        winners = [row[0] for row in conn.execute("SELECT id, data FROM cards WHERE registered=1")
+                   if check_bingo(row[1], drawn)]
         conn.commit()
     except Exception as e:
-        print("Draw error:", e)
-        winners = []
-        drawn = []
+        print(f"DRAW ERROR: {e}")
+        winners, drawn = [], []
     finally:
         conn.close()
     return jsonify({"drawn": drawn, "winners": winners})
@@ -228,11 +228,11 @@ def report():
     conn = sqlite3.connect(DB_PATH)
     try:
         drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
-        winners = []
-        for row in conn.execute("SELECT id, player_name, data FROM cards WHERE registered=1"):
-            if check_bingo(row[2], drawn):
-                winners.append({"id": row[0], "name": row[1] or row[0]})
-    except:
+        winners = [{"id":row[0],"name":row[1] or row[0]}
+                   for row in conn.execute("SELECT id, player_name, data FROM cards WHERE registered=1")
+                   if check_bingo(row[2], drawn)]
+    except Exception as e:
+        print(f"REPORT ERROR: {e}")
         drawn, winners = [], []
     finally:
         conn.close()
@@ -251,22 +251,41 @@ def report():
         buffer.seek(0)
         return send_file(buffer, download_name="rapport.pdf", mimetype='application/pdf')
     except Exception as e:
-        print("Report error:", e)
-        return "Rapport generatie mislukt", 500
+        print(f"PDF REPORT ERROR: {e}")
+        return "Rapport mislukt", 500
 
-# --- VERCEL HANDLER (CRUCIAAL!) ---
+# --- ADMIN: RESET DB (alleen jij) ---
+@app.route('/reset')
+def reset_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM cards")
+        conn.execute("DELETE FROM drawn_numbers")
+        conn.commit()
+        conn.close()
+        return "DB gereset! <a href='/'>Terug</a>"
+    except Exception as e:
+        return f"Reset mislukt: {e}"
+
+# --- ERROR HANDLING ---
 @app.errorhandler(Exception)
 def handle_error(e):
-    print("Unhandled error:", e)
-    return "Serverfout", 500
+    print(f"UNHANDLED ERROR: {e}")
+    return "Interne serverfout", 500
 
-def handler(event, context):
-    """Vercel serverless entry point"""
-    from werkzeug.wsgi import get_environ
-    environ = get_environ(event)
-    response = app(environ, lambda s, h: None)
-    return response
+# --- VERCEL HANDLER ---
+def handler(event, context=None):
+    try:
+        from werkzeug.wsgi import get_environ
+        environ = get_environ(event)
+        response = app(environ, lambda s, h: None)
+        return response
+    except Exception as e:
+        print(f"HANDLER CRASH: {e}")
+        return {
+            "statusCode": 500,
+            "body": "Server error"
+        }
 
-# Lokaal testen
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
