@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/app.py",
+      "use": "@vercel/python",
+      "config": { "maxLambdaSize": "50mb" }
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/app.py" },
+    { "src": "/generate_card", "dest": "/api/app.py" },
+    { "src": "/register/(.*)", "dest": "/api/app.py" },
+    { "src": "/verify/(.*)", "dest": "/api/app.py" },
+    { "src": "/draw", "dest": "/api/app.py" },
+    { "src": "/status", "dest": "/api/app.py" },
+    { "src": "/report", "dest": "/api/app.py" },
+    { "src": "/(.*)", "dest": "/static/$1" }
+  ]
+}
