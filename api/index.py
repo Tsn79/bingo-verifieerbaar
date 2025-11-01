@@ -1,6 +1,8 @@
-from flask import Flask, request, render_template, jsonify, send_file
-import sqlite3
+import os
+import sys
 import json
+from flask import Flask, request, render_template, jsonify, send_file, Response
+import sqlite3
 import uuid
 import random
 import hashlib
@@ -12,11 +14,18 @@ from io import BytesIO
 import qrcode
 from PIL import Image
 
-app = Flask(__name__, template_folder='../templates', static_folder='../static')
+# Voeg root toe voor imports in Vercel
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# --- DATABASE ---
+app = Flask(__name__, 
+            static_folder='../static',      # Fix: Relatief naar root
+            template_folder='../templates')  # Fix: Relatief naar root
+
+# --- DATABASE (SQLite in /tmp voor Vercel serverless) ---
+DB_PATH = '/tmp/bingo.db'  # Vercel: Gebruik temp dir, anders persistentie issues
+
 def init_db():
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS cards
                  (id TEXT PRIMARY KEY, data TEXT, card_hash TEXT, registered INTEGER DEFAULT 0,
@@ -28,7 +37,7 @@ def init_db():
 
 init_db()
 
-# --- CARD GENERATOR ---
+# --- CARD GENERATOR (rest hetzelfde als voorheen) ---
 def generate_bingo_card():
     card_id = str(uuid.uuid4())[:8].upper()
     cols = {
@@ -67,9 +76,9 @@ def create_pdf(card_id, cols):
             p.drawCentredString(x + cell/2, y - r*0.8*inch, txt)
             p.rect(x, y - (r+1)*0.8*inch, cell, 0.8*inch)
 
-    # QR Code
+    # QR Code (update met je Vercel URL)
     qr = qrcode.QRCode(box_size=8, border=4)
-    qr.add_data(f"https://jouw-vercel-app.vercel.app/verify/{card_id}")
+    qr.add_data(f"https://jouw-app.vercel.app/verify/{card_id}")  # ← Vervang 'jouw-app' met je echte URL
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     img_byte = BytesIO()
@@ -80,7 +89,7 @@ def create_pdf(card_id, cols):
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- BINGO CHECK ---
+# --- BINGO CHECK (onveranderd) ---
 def check_bingo(card_data, drawn):
     grid = json.loads(card_data)
     matrix = [[grid[c][r] for c in 'BINGO'] for r in range(5)]
@@ -93,7 +102,7 @@ def check_bingo(card_data, drawn):
     if all(matrix[i][4-i] in drawn_set or matrix[i][4-i] == "FREE" for i in range(5)): return True
     return False
 
-# --- ROUTES ---
+# --- ROUTES (onveranderd, maar met DB_PATH) ---
 @app.route('/')
 def home():
     return render_template('admin.html')
@@ -102,7 +111,7 @@ def home():
 def generate_card():
     card_id, cols, card_hash = generate_bingo_card()
     pdf = create_pdf(card_id, cols)
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("INSERT OR REPLACE INTO cards (id, data, card_hash) VALUES (?, ?, ?)",
                  (card_id, json.dumps(cols), card_hash))
     conn.commit()
@@ -112,25 +121,26 @@ def generate_card():
 @app.route('/register/<card_id>', methods=['GET', 'POST'])
 def register(card_id):
     if request.method == 'GET':
-        return f'''
+        return '''
         <form method="post" style="text-align:center;margin-top:50px;">
-          <h2>Registreer kaart {card_id}</h2>
+          <h2>Registreer kaart {}</h2>
           <input name="name" placeholder="Naam" required><br><br>
           <input name="email" placeholder="Email" type="email"><br><br>
           <button type="submit">Registreer</button>
         </form>
-        '''
-    name, email = request.form['name'], request.form.get('email', '')
-    conn = sqlite3.connect('bingo.db')
+        '''.format(card_id)
+    name = request.form['name']
+    email = request.form.get('email', '')
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("UPDATE cards SET registered=1, player_name=?, player_email=? WHERE id=?", 
                  (name, email, card_id))
     conn.commit()
     conn.close()
-    return "<h2>Geregistreerd! Ga naar <a href='/'>admin</a> of <a href='/verify'>verify</a></h2>"
+    return "<h2>Geregistreerd! Ga naar <a href='/'>admin</a> of <a href='/verify/{}'>verify</a></h2>".format(card_id)
 
 @app.route('/verify/<card_id>')
 def verify(card_id):
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     row = conn.execute("SELECT data, card_hash FROM cards WHERE id=?", (card_id,)).fetchone()
     if not row: return "Kaart niet gevonden", 404
     card_data, stored_hash = row
@@ -144,7 +154,7 @@ def verify(card_id):
 
 @app.route('/status')
 def status():
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
     conn.close()
     return jsonify({"drawn": drawn})
@@ -152,7 +162,7 @@ def status():
 @app.route('/draw', methods=['POST'])
 def draw():
     number = int(request.json['number'])
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("INSERT INTO drawn_numbers (number) VALUES (?)", (number,))
     drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
     winners = []
@@ -165,7 +175,7 @@ def draw():
 
 @app.route('/report')
 def report():
-    conn = sqlite3.connect('bingo.db')
+    conn = sqlite3.connect(DB_PATH)
     drawn = [r[0] for r in conn.execute("SELECT number FROM drawn_numbers ORDER BY drawn_at")]
     winners = []
     for row in conn.execute("SELECT id, player_name, data FROM cards WHERE registered=1"):
@@ -183,6 +193,12 @@ def report():
     buffer.seek(0)
     return send_file(buffer, download_name="bingo_rapport.pdf", mimetype='application/pdf')
 
-# Vercel handler
-def handler(event, context):
-    return app(event, context)
+# --- VERCEL HANDLER (belangrijk voor serverless) ---
+def handler(req):
+    # Simuleer Flask request
+    from werkzeug.wrappers import Request
+    req_obj = Request.from_environ(req)
+    return app(req_obj.environ, lambda status, headers: None)
+
+if __name__ == '__main__':
+    app.run(debug=True)
