@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Controleer Kaart {{ card_id }}</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Kaart {{ card_id }}</h1>
+  {% if valid %}
+    <p style="color:green;">Authentiek</p>
+  {% else %}
+    <p style="color:red;">GEWIJZIGD!</p>
+  {% endif %}
+
+  <table style="margin:auto;border-collapse:collapse;">
+    <tr>{% for c in 'BINGO' %}<th>{{ c }}</th>{% endfor %}</tr>
+    {% for i in range(5) %}
+    <tr>
+      <td>{{ columns['B'][i] }}</td>
+      <td>{{ columns['I'][i] }}</td>
+      <td>{{ "FREE" if i==2 else columns['N'][i] }}</td>
+      <td>{{ columns['G'][i] }}</td>
+      <td>{{ columns['O'][i] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <h2>Getrokken</h2>
+  <p id="drawn">{{ drawn|join(' • ') }}</p>
+
+  <h2>Hash (bewijs)</h2>
+  <code>{{ hash_stored }}</code>
+
+  <script>
+  setInterval(()=>fetch('/status').then(r=>r.json()).then(d=>document.getElementById('drawn').innerText=d.drawn.join(' • ')),3000);
+  </script>
+</body>
+</html>
